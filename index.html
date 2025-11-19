@@ -51,7 +51,7 @@ sudo apt clean
 sudo logrotate -d <span class="hljs-regexp">/etc/</span>logrotate.conf    <span class="hljs-comment"># 先 dry-run 看一下</span>
 </code></pre>
 <h2 id="-tmux-screen-">用 tmux/screen 防止“窗口一关进度清零”</h2>
-<p>长时间任务必进 tmux</p>
+<h3 id="-tmux">长时间任务必进 tmux</h3>
 <pre><code class="lang-bash">sudo apt install tmux
 
 tmux <span class="hljs-keyword">new</span> -s work
@@ -65,6 +65,8 @@ Ctrl+b 然后按 d
 tmux attach -t work
 </code></pre>
 <p>只要 VPS 不重启，你关了本地终端也不会中断任务。</p>
+<h3 id="-tmux">延时高用跳板机+tmux</h3>
+<p>路由不是两点之间直线最短，如果中美直连延时过高，考虑中-日-美跳板登录，配合tmux提升维护效率和体验。</p>
 <h2 id="-">别手配环境，容器化是好文明</h2>
 <h3 id="-docker-">用 docker 跑服务，减少“环境地狱”</h3>
 <p>安装 docker（以 Debian/Ubuntu 为例，可用官方脚本）：</p>
