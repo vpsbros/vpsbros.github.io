@@ -1,1 +1,206 @@
-index.html
+<h1 id="-vps-">整理一些VPS使用技巧</h1>
+<p>作者：<a href="https://www.vpsbros.com">vpsbros</a></p>
+<h2 id="-vps-">刚拿到 VPS 先做的几件小事</h2>
+<h3 id="-ssh-">换端口 + 关密码登录（SSH）</h3>
+<pre><code class="lang-bash"><span class="hljs-comment"># 编辑 sshd 配置</span>
+<span class="hljs-attribute">sudo</span> vim /etc/ssh/sshd_config
+
+<span class="hljs-comment"># 确保包含：</span>
+Port <span class="hljs-number">22222</span>              <span class="hljs-comment"># 换一个非 22 端口</span>
+PermitRootLogin <span class="hljs-literal">no</span>      <span class="hljs-comment"># 禁止 root 直接登录</span>
+PasswordAuthentication <span class="hljs-literal">no</span>  <span class="hljs-comment"># 禁止密码登录，只允许密钥</span>
+</code></pre>
+<p>然后：</p>
+<pre><code class="lang-bash"><span class="hljs-attribute">sudo systemctl restart ssh</span>
+</code></pre>
+<p>记得先<strong>用新端口开一个新终端测试能登录</strong>，确认没问题再关掉旧会话，避免把自己锁在门外。</p>
+<h3 id="-sudo-">加一个普通用户 + sudo 权限</h3>
+<pre><code class="lang-bash"><span class="hljs-symbol">sudo</span> <span class="hljs-keyword">adduser </span>deploy
+<span class="hljs-symbol">sudo</span> usermod -aG sudo deploy
+</code></pre>
+<p>之后就用 <code>deploy</code> 登录，<code>sudo</code> 提权，不要天天 root 满地跑。</p>
+<h3 id="-ufw-">开基础防火墙（UFW）</h3>
+<pre><code class="lang-bash">sudo apt <span class="hljs-keyword">update</span>
+sudo apt <span class="hljs-keyword">install</span> ufw
+
+# 允许 SSH 新端口
+sudo ufw <span class="hljs-keyword">allow</span> <span class="hljs-number">22222</span>/tcp
+
+# 如果跑 Web
+sudo ufw <span class="hljs-keyword">allow</span> <span class="hljs-number">80</span>,<span class="hljs-number">443</span>/tcp
+
+sudo ufw <span class="hljs-keyword">enable</span>
+sudo ufw <span class="hljs-keyword">status</span>
+</code></pre>
+<p>简单暴力，比裸奔强太多。</p>
+<h2 id="-">包管理和系统维护的小习惯</h2>
+<h3 id="-">固定版本，避免一键全升级搞崩</h3>
+<p>普通服务器别上来就 <code>apt upgrade -y</code>，推荐：</p>
+<pre><code class="lang-bash">sudo apt <span class="hljs-keyword">update</span>
+sudo apt <span class="hljs-keyword">list</span> <span class="hljs-comment">--upgradable</span>
+</code></pre>
+<p>先看看有哪些要升级，关键软件（数据库、nginx）可以<strong>单独升级</strong>：</p>
+<pre><code class="lang-bash">sudo apt <span class="hljs-keyword">install</span> <span class="hljs-comment">--only-upgrade nginx</span>
+</code></pre>
+<h3 id="-">定期清理废包和日志</h3>
+<pre><code class="lang-bash"><span class="hljs-comment"># 清理下载的旧包</span>
+sudo apt autoremove
+sudo apt clean
+
+<span class="hljs-comment"># 日志按大小轮转（默认就有 logrotate）</span>
+sudo logrotate -d <span class="hljs-regexp">/etc/</span>logrotate.conf    <span class="hljs-comment"># 先 dry-run 看一下</span>
+</code></pre>
+<h2 id="-tmux-screen-">用 tmux/screen 防止“窗口一关进度清零”</h2>
+<p>长时间任务必进 tmux</p>
+<pre><code class="lang-bash">sudo apt install tmux
+
+tmux <span class="hljs-keyword">new</span> -s work
+<span class="hljs-meta"># 里面随便跑：</span>
+docker build ...
+apt upgrade ...
+<span class="hljs-meta"># 分离会话</span>
+Ctrl+b 然后按 d
+
+<span class="hljs-meta"># 再次连接</span>
+tmux attach -t work
+</code></pre>
+<p>只要 VPS 不重启，你关了本地终端也不会中断任务。</p>
+<h2 id="-">别手配环境，容器化是好文明</h2>
+<h3 id="-docker-">用 docker 跑服务，减少“环境地狱”</h3>
+<p>安装 docker（以 Debian/Ubuntu 为例，可用官方脚本）：</p>
+<pre><code class="lang-bash">curl -fsSL http<span class="hljs-variable">s:</span>//<span class="hljs-built_in">get</span>.docker.<span class="hljs-keyword">com</span> | sudo <span class="hljs-keyword">sh</span>
+sudo usermod -aG docker $USER
+</code></pre>
+<p>然后：</p>
+<pre><code class="lang-bash"><span class="hljs-comment"># 跑一个临时测试容器</span>
+docker <span class="hljs-built_in">run</span> <span class="hljs-comment">--rm -it ubuntu bash</span>
+</code></pre>
+<p>想装 Redis、MariaDB、Nextcloud 之类，尽量优先用官方镜像，方便版本控制和迁移。</p>
+<h3 id="-docker-compose-">用 docker-compose 管一组服务</h3>
+<p><code>docker-compose.yml</code> 小技巧：把数据目录映射到宿主机的 <code>/srv</code> 或 <code>/data</code>，迁移时直接打包那几个目录就行。</p>
+<pre><code class="lang-yaml"><span class="hljs-symbol">services:</span>
+  <span class="hljs-symbol">db:</span>
+    <span class="hljs-symbol">image:</span> <span class="hljs-symbol">mariadb:</span><span class="hljs-number">11</span>
+    <span class="hljs-symbol">volumes:</span>
+      - <span class="hljs-regexp">/srv/db</span><span class="hljs-symbol">:/var/lib/mysql</span>
+</code></pre>
+<h2 id="-">备份：不是可选，是必选</h2>
+<h3 id="-rclone">最便宜的备份：打包 + rclone</h3>
+<p>安装 rclone，把对象存储 / 网盘挂进去：</p>
+<pre><code class="lang-bash">rclone <span class="hljs-built_in">config</span>
+<span class="hljs-comment"># 按向导把远端存储配好（比如 Backblaze、S3 兼容、OneDrive）</span>
+</code></pre>
+<p>然后写个脚本：</p>
+<pre><code class="lang-bash"><span class="hljs-meta">#!/bin/bash</span>
+<span class="hljs-built_in">set</span> <span class="hljs-_">-e</span>
+DATE=$(date +%F)
+
+tar czf /tmp/site-<span class="hljs-variable">$DATE</span>.tar.gz /srv /etc/nginx /etc/letsencrypt
+
+rclone copy /tmp/site-<span class="hljs-variable">$DATE</span>.tar.gz remote:server-backup/
+rm /tmp/site-<span class="hljs-variable">$DATE</span>.tar.gz
+</code></pre>
+<p>配个 crontab：</p>
+<pre><code class="lang-bash">crontab -<span class="hljs-built_in">e</span>
+0 3 * * * /usr/<span class="hljs-keyword">local</span>/bin/backup.<span class="hljs-keyword">sh</span>
+</code></pre>
+<p>真正出事那一刻，你会感谢这个脚本。</p>
+<h3 id="-">数据库单独备份</h3>
+<p>以 MySQL/MariaDB 为例：</p>
+<pre><code class="lang-bash">mysqldump -u root -p --all-databases &gt; /srv/backups/db-$(<span class="hljs-keyword">date</span> +%F).sql
+</code></pre>
+<h2 id="-">监控和告警：不要等用户告诉你网站挂了</h2>
+<h3 id="-systemd-">用 systemd 自带的重启策略</h3>
+<p>服务挂了自动拉起来，配置示例 <code>/etc/systemd/system/myapp.service</code>：</p>
+<pre><code class="lang-ini"><span class="hljs-section">[Service]</span>
+<span class="hljs-attr">Restart</span>=<span class="hljs-literal">on</span>-failure
+<span class="hljs-attr">RestartSec</span>=<span class="hljs-number">5</span>
+</code></pre>
+<p>改完：</p>
+<pre><code class="lang-bash">sudo<span class="hljs-keyword"> system</span>ctl daemon-reload
+sudo<span class="hljs-keyword"> system</span>ctl enable myapp
+sudo<span class="hljs-keyword"> system</span>ctl restart myapp
+</code></pre>
+<h3 id="-">装个简单的监控工具</h3>
+<p>比如 <code>htop</code>、<code>iotop</code>、<code>ncdu</code>：</p>
+<pre><code class="lang-bash">sudo apt <span class="hljs-keyword">install</span> htop iotop ncdu
+</code></pre>
+<ul>
+<li><code>htop</code> 看总体资源</li>
+<li><code>iotop</code> 看磁盘谁在疯狂读写</li>
+<li><code>ncdu</code> 看是哪个目录吃满了硬盘</li>
+</ul>
+<h3 id="-uptime-">外部监控（免费 uptime）</h3>
+<p>去找一个免费的站点可用性监控（例如 UptimeRobot、Better Uptime 之类），加个 HTTP 检测，服务挂了给你发邮件 / 消息，比你自己盯着踏实得多。</p>
+<h2 id="nginx-">Nginx / 反向代理的小技巧</h2>
+<h3 id="-nginx">统一反代，域名交给 Nginx</h3>
+<p>在 VPS 内部服务尽量都跑在 <code>127.0.0.1:xxxx</code> 上，然后用 Nginx 做反向代理，这样：</p>
+<ul>
+<li>换证书、一键 HTTPS 都在 Nginx 搞</li>
+<li>后端服务端口不用对外开放，安全性更好</li>
+</ul>
+<p>基本范式：</p>
+<pre><code class="lang-nginx"><span class="hljs-section">server</span> {
+    <span class="hljs-attribute">listen</span> <span class="hljs-number">80</span>;
+    <span class="hljs-attribute">server_name</span> example.com;
+
+    <span class="hljs-attribute">location</span> / {
+        <span class="hljs-attribute">proxy_pass</span> http://127.0.0.1:3000;
+        <span class="hljs-attribute">proxy_set_header</span> Host <span class="hljs-variable">$host</span>;
+        <span class="hljs-attribute">proxy_set_header</span> X-Real-IP <span class="hljs-variable">$remote_addr</span>;
+    }
+}
+</code></pre>
+<h3 id="-acme-sh-certbot-">用 acme.sh / certbot 自动续期证书</h3>
+<p>以 certbot 为例：</p>
+<pre><code class="lang-bash">sudo apt install certbot python3-certbot-nginx
+sudo certbot --nginx -d example<span class="hljs-selector-class">.com</span> -d www<span class="hljs-selector-class">.example</span><span class="hljs-selector-class">.com</span>
+</code></pre>
+<p>弄好之后会自动续期，一般不用你管。</p>
+<h2 id="-">日志与调试的小套路</h2>
+<h3 id="-journald-">统一把应用日志打到 journald 或文件</h3>
+<ul>
+<li>systemd 管理的服务：<code>journalctl -u your-service -f</code></li>
+<li>自己写的程序，日志落到 <code>/var/log/xxx.log</code>，再配 <code>logrotate</code> 滚动</li>
+</ul>
+<h3 id="nginx-">nginx 日志分域名存</h3>
+<p>在 server 块里指定：</p>
+<pre><code class="lang-nginx">access_log /<span class="hljs-built_in">var</span>/<span class="hljs-built_in">log</span>/nginx/<span class="hljs-built_in">example</span>.access.<span class="hljs-built_in">log</span>;
+error_log /<span class="hljs-built_in">var</span>/<span class="hljs-built_in">log</span>/nginx/<span class="hljs-built_in">example</span>.<span class="hljs-built_in">error</span>.<span class="hljs-built_in">log</span>;
+</code></pre>
+<p>出问题时不用在一坨混合日志里翻。</p>
+<h3 id="-tail-f-grep-">善用 <code>tail -f</code> 和 <code>grep</code></h3>
+<pre><code class="lang-bash">tail -f <span class="hljs-regexp">/var/</span>log<span class="hljs-regexp">/nginx/</span>access.log | <span class="hljs-keyword">grep</span> <span class="hljs-string">'500'</span>
+</code></pre>
+<h2 id="-windows-vps-">从 Windows 上传/下载文件到 VPS 的顺手玩法</h2>
+<h3 id="-winscp-filezilla">图形化：用 WinSCP / FileZilla</h3>
+<ul>
+<li>协议选 SFTP</li>
+<li>主机填 VPS IP</li>
+<li>端口填你改过的 SSH 端口（如 22222）</li>
+<li>用户名就是你创建的那个普通用户</li>
+</ul>
+<p>左边本地，右边 VPS，拖拽就能传文件，适合上传网站包、备份下载回本地。</p>
+<h3 id="-scp">命令行：用 scp</h3>
+<p>在 Windows 安装好 OpenSSH 或用 WSL：</p>
+<pre><code class="lang-bash"><span class="hljs-comment"># 上传本地文件到 VPS</span>
+<span class="hljs-attribute">scp</span> -P <span class="hljs-number">22222</span> localfile.txt user<span class="hljs-variable">@your</span>-vps-ip:/home/user/
+
+<span class="hljs-comment"># 下载 VPS 文件到本地</span>
+scp -P <span class="hljs-number">22222</span> user<span class="hljs-variable">@your</span>-vps-ip:/home/user/file.txt .
+</code></pre>
+<h2 id="-">降低“不可预期操作”的风险</h2>
+<h3 id="-">在命令行提示里显示当前服务器名称</h3>
+<p>编辑 <code>~/.bashrc</code>：</p>
+<pre><code class="lang-bash"><span class="hljs-attr">PS1</span>=<span class="hljs-string">"\u@\h:\w$ "</span>
+</code></pre>
+<p>这样你能一眼分辨现在在本机还是线上 VPS，避免把危险命令敲在生产上。</p>
+<h3 id="-echo-">危险命令前面先 echo 一次</h3>
+<p>例如清理：</p>
+<pre><code class="lang-bash"><span class="hljs-comment"># 先看一眼会删什么</span>
+echo rm -rf <span class="hljs-regexp">/var/www/</span>*
+
+<span class="hljs-comment"># 再真正执行</span>
+rm -rf <span class="hljs-regexp">/var/www/</span>*
+</code></pre>
+<p>看似啰嗦，能救命。</p>
