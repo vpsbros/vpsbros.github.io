@@ -206,3 +206,171 @@ echo rm -rf <span class="hljs-regexp">/var/www/</span>*
 rm -rf <span class="hljs-regexp">/var/www/</span>*
 </code></pre>
 <p>看似啰嗦，能救命。</p>
+<h2 id="ssh-">SSH 再进阶一点：多机管理、跳板机</h2>
+<h3 id="-ssh-config-">~/.ssh/config 写好，少敲很多字</h3>
+<p>本地电脑上建/改 <code>~/.ssh/config</code>：</p>
+<pre><code class="lang-sshconfig">Host my-vps
+    HostName <span class="hljs-number">1.2</span><span class="hljs-number">.3</span><span class="hljs-number">.4</span>
+    User deploy
+    Port <span class="hljs-number">22222</span>
+    IdentityFile ~/.ssh/id_ed25519
+</code></pre>
+<p>以后直接：</p>
+<pre><code class="lang-bash">ssh <span class="hljs-keyword">my</span>-vps
+scp <span class="hljs-built_in">file</span>.txt <span class="hljs-keyword">my</span>-vps:/home/deploy/
+</code></pre>
+<h3 id="-vps-">把 VPS 当“跳板机”</h3>
+<p>如果家里有内网机器（NAS、树莓派），可以只开 VPS 的 22/22222 端口，通过 SSH 反向隧道把家里设备“挂”到 VPS 上，用 <code>ssh -R</code>：</p>
+<pre><code class="lang-bash"><span class="hljs-selector-tag">ssh</span> <span class="hljs-selector-tag">-R</span> 10022<span class="hljs-selector-pseudo">:localhost</span><span class="hljs-selector-pseudo">:22</span> <span class="hljs-selector-tag">deploy</span>@<span class="hljs-keyword">your</span>-<span class="hljs-keyword">vps</span>-<span class="hljs-keyword">ip</span>
+</code></pre>
+<p>然后在 VPS 上就可以：</p>
+<pre><code class="lang-bash">ssh localhost -<span class="hljs-selector-tag">p</span> <span class="hljs-number">10022</span>
+</code></pre>
+<p>配合 autossh 可以长期保持隧道不断线。</p>
+<h2 id="-fail2ban-">用 Fail2ban/防火墙防一波暴力破解</h2>
+<h3 id="fail2ban-ban-ip">Fail2ban 自动 ban 爆破 IP</h3>
+<pre><code class="lang-bash">sudo apt install fail2ban
+sudo cp <span class="hljs-regexp">/etc/</span>fail2ban<span class="hljs-regexp">/jail.conf /</span>etc<span class="hljs-regexp">/fail2ban/</span>jail.local
+</code></pre>
+<p>在 <code>jail.local</code> 里启用 sshd：</p>
+<pre><code class="lang-ini"><span class="hljs-section">[sshd]</span>
+<span class="hljs-attr">enabled</span> = <span class="hljs-literal">true</span>
+<span class="hljs-attr">port</span>    = <span class="hljs-number">22222</span>
+<span class="hljs-attr">maxretry</span> = <span class="hljs-number">5</span>
+</code></pre>
+<p>然后：</p>
+<pre><code class="lang-bash">sudo systemctl <span class="hljs-built_in">restart</span> fail2ban
+sudo fail2ban-client <span class="hljs-built_in">status</span> sshd
+</code></pre>
+<h3 id="iptables-ufw-ip-ssh-">iptables/ufw 做“只允许少数 IP 登录 SSH”</h3>
+<p>如果你有固定 IP，可以直接限制：</p>
+<pre><code class="lang-bash">sudo ufw deny <span class="hljs-number">22222</span>/tcp
+sudo ufw allow <span class="hljs-keyword">from</span> 你的IP <span class="hljs-keyword">to</span> <span class="hljs-literal">any</span> <span class="hljs-keyword">port</span> <span class="hljs-number">22222</span> <span class="hljs-keyword">proto</span> tcp
+</code></pre>
+<h2 id="-">性能相关的小操作</h2>
+<h3 id="-vps-swap">给小内存 VPS 加个 swap</h3>
+<p>很多 1G 内存的小鸡不带 swap，编译、跑大一点的东西容易 OOM：</p>
+<pre><code class="lang-bash">sudo fallocate <span class="hljs-_">-l</span> 1G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+<span class="hljs-built_in">echo</span> <span class="hljs-string">'/swapfile none swap sw 0 0'</span> | sudo tee <span class="hljs-_">-a</span> /etc/fstab
+</code></pre>
+<h3 id="-ncdu-">用 ncdu 找出“谁吃满了磁盘”</h3>
+<pre><code class="lang-bash"><span class="hljs-attribute">sudo</span> ncdu /
+</code></pre>
+<p>交互界面慢慢浏览，删准的，不删错的。</p>
+<h3 id="-">简单的内核参数优化（谨慎使用）</h3>
+<p>在 <code>/etc/sysctl.d/99-tuning.conf</code>：</p>
+<pre><code class="lang-conf">net<span class="hljs-selector-class">.core</span><span class="hljs-selector-class">.somaxconn</span> = <span class="hljs-number">1024</span>
+net<span class="hljs-selector-class">.ipv4</span><span class="hljs-selector-class">.tcp_tw_reuse</span> = <span class="hljs-number">1</span>
+vm<span class="hljs-selector-class">.swappiness</span> = <span class="hljs-number">10</span>
+</code></pre>
+<p>应用：</p>
+<pre><code class="lang-bash">sudo sysctl <span class="hljs-comment">--system</span>
+</code></pre>
+<p>不要网上抄一大堆完全不懂的参数，三五个足够。</p>
+<h2 id="-">多站点、多服务的域名与反代管理</h2>
+<h3 id="-vps-">一台 VPS 上挂一堆子域名</h3>
+<p>例如：</p>
+<ul>
+<li><code>blog.example.com</code> → 127.0.0.1:4000</li>
+<li><code>pan.example.com</code> → 127.0.0.1:9000</li>
+<li><code>status.example.com</code> → 127.0.0.1:8080</li>
+</ul>
+<p>对应建多个 <code>server</code> 块，每个 <code>server_name</code> 一个子域，内部用不同端口或不同 docker 容器。</p>
+<h3 id="-">用一个统一的“反代入口”</h3>
+<p>特别建议 <code>/srv/apps/app-name</code> 约定好目录结构，例如：</p>
+<pre><code class="lang-text">/srv
+  /<span class="hljs-keyword">blog
+</span>  /nextcloud
+  /status
+</code></pre>
+<p>Nginx 配置都放 <code>/etc/nginx/sites-enabled/xxx.conf</code>，备份时打包 <code>/srv</code> + <code>/etc/nginx</code> 就差不多够了。</p>
+<h2 id="-">自动化：别手工复刻同一台机器十次</h2>
+<h3 id="-">写一个“初始化脚本”</h3>
+<p>比如 <code>init-vps.sh</code>：</p>
+<pre><code class="lang-bash"><span class="hljs-meta">#!/bin/bash</span>
+<span class="hljs-built_in">set</span> <span class="hljs-_">-e</span>
+
+adduser --disabled-password --gecos <span class="hljs-string">""</span> deploy || <span class="hljs-literal">true</span>
+usermod <span class="hljs-_">-a</span>G sudo deploy
+
+apt update
+apt install -y ufw htop tmux fail2ban
+
+ufw allow 22222/tcp
+ufw <span class="hljs-built_in">enable</span>
+</code></pre>
+<p>以后新 VPS 只需：</p>
+<pre><code class="lang-bash">curl -sS <span class="hljs-string">https:</span><span class="hljs-comment">//your-domain.com/init-vps.sh | sudo bash</span>
+</code></pre>
+<h3 id="-ansible-terraform-">尝试用 Ansible / Terraform 管多台</h3>
+<p>当你有不止一台 VPS，用 <a href="https://www.ansible.com/">Ansible</a> 这类工具可以：</p>
+<ul>
+<li>批量改配置</li>
+<li>批量更新服务</li>
+<li>确保多台机器配置一致</li>
+</ul>
+<p>前期学习成本稍高，但长远能省很多时间和脑细胞。</p>
+<h2 id="-vpn-vps-">用 VPN / 内网组网让多台 VPS 互相“贴身”</h2>
+<h3 id="wireguard-tailscale">WireGuard / Tailscale</h3>
+<p>给多台 VPS 安装 WireGuard 或 <a href="https://tailscale.com/">Tailscale</a>：</p>
+<ul>
+<li>每台机器会拿到一个内网 IP（比如 100.x.x.x）</li>
+<li>内部服务直接绑内网 IP，不对公网开端口</li>
+<li>你电脑也加入这个网络，就像这些 VPS 都在你家局域网里</li>
+</ul>
+<p>特别适合：数据库、后台管理面板、内网工具。</p>
+<h3 id="-">只暴露一层反向代理到公网</h3>
+<p>例如：</p>
+<ul>
+<li>VPS A：对外，只跑 Nginx + WireGuard</li>
+<li>VPS B/C：只跑应用，通过内网互通</li>
+</ul>
+<p>外网只能打到 A，其他都在内网里，安全性直线上升。</p>
+<h2 id="-">日志、审计和“谁干了啥”</h2>
+<h3 id="-shell-history-">把重要操作写进 shell history 注释</h3>
+<p>例如：</p>
+<pre><code class="lang-bash"><span class="hljs-comment"># 升级数据库到 11.1</span>
+sudo apt install <span class="hljs-comment">--only-upgrade postgresql</span>
+</code></pre>
+<p>以后 <code>history</code> 里就不只有命令，还有人类语言的注释，排查问题会少骂过去的自己。</p>
+<h3 id="-">开启命令审计（简单做法）</h3>
+<p>在 <code>~/.bashrc</code> 里加：</p>
+<pre><code class="lang-bash"><span class="hljs-keyword">export</span> HISTTIMEFORMAT=<span class="hljs-string">"%F %T "</span>
+<span class="hljs-keyword">export</span> PROMPT_COMMAND=<span class="hljs-string">'history -a'</span>
+</code></pre>
+<p>这样每条历史都有时间戳。</p>
+<h2 id="-">“上生产前先在沙盒玩一遍”</h2>
+<h3 id="-vps-">先在本地 / 测试 VPS 排练</h3>
+<p>真正要改 Nginx、数据库、大版本升级前，可以：</p>
+<ul>
+<li>买个最便宜的小 VPS，当“沙盒”</li>
+<li>把配置和数据复制过去，先在那里升级一遍，看会不会炸</li>
+<li>解决问题后再在正式机操作</li>
+</ul>
+<h3 id="-nginx-t-systemd-test-">善用 <code>nginx -t</code>、<code>systemd --test</code> 之类的检查命令</h3>
+<p>改配置前：</p>
+<pre><code class="lang-bash"><span class="hljs-attribute">sudo nginx -t</span>
+</code></pre>
+<p>失败就别 reload，省掉线上直接 502 的尴尬。</p>
+<h2 id="-">轻量运维界面：面板类工具</h2>
+<h3 id="-">用面板管理只是辅助手段，不要完全依赖</h3>
+<p>像 Cockpit（集成系统管理的）、Portainer（docker 管理）、一些开源主机面板，可以适当用：</p>
+<ul>
+<li>图形化管理容器</li>
+<li>查看日志、基本监控</li>
+<li>简单重启服务</li>
+</ul>
+<p>但真正关键的东西（备份脚本、自动化）还是建议在命令行层面掌握，不被某个面板绑死。</p>
+<h2 id="-vps-">把 VPS 当“个人数字实验室”</h2>
+<p>一些有意思、但不那么“正经商业”的玩法：</p>
+<ul>
+<li>自建同步盘：Nextcloud / Seafile，当自己的“无广告网盘”</li>
+<li>自建 RSS 聚合：FreshRSS / Miniflux，把信息流掌握在自己手里</li>
+<li>自建密码库同步端：Bitwarden 家族的自建版</li>
+<li>自建图床、短链服务：方便日常分享</li>
+<li>自建小型搜索、笔记、LLM 服务，当自己的“第二大脑”</li>
+</ul>
+<p>当你慢慢把这些东西挂在自己的 VPS 上，就会发现：那不只是一台远程电脑，而是一个跟着你长大的数字小宇宙。</p>
